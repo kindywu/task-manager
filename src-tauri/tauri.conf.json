@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickkuk/nickkuk/refs/heads/main/schema.json",
+  "productName": "Task Manager",
+  "version": "0.1.0",
+  "identifier": "com.taskmanager.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Task Manager",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "sql": {
+      "preload": {
+        "db": "sqlite:taskmanager.db"
+      }
+    },
+    "notification": {
+      "all": true
+    }
+  }
+}
