@@ -30,7 +30,8 @@
       "Bash(cargo build *)",
       "Bash(git *)",
       "Bash(cargo tauri *)",
-      "Bash(cargo run *)"
+      "Bash(cargo run *)",
+      "Bash(awk '/```mermaid/,/```/' \"C:/ws/Rust/tauri/docs/ARCHITECTURE.md\")"
     ]
   }
 }

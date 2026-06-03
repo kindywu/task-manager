@@ -88,7 +88,7 @@ const ok = await invoke<boolean>('verify_pin', { pin: '123456' });
 
 **类比**：就像前端的 `fetch('/api/xxx')`，但这里的"API 服务端"是本地的 Rust 代码，不走网络，直接通过 IPC 通信，极快且安全。
 
-> 在本项目中，只有 PIN 认证相关操作使用 `invoke()` 方式。任务 CRUD 走的是另一条路——插件，下面马上讲。
+> 在本项目中，PIN 认证和所有数据**写操作**使用 `invoke()` 方式。读操作走的是另一条路——`tauri-plugin-sql` 插件，下面马上讲。
 
 ### 2.3 Tauri 插件（Plugin）—— 给前端提供原生能力
 
@@ -244,23 +244,23 @@ cargo tauri dev / 双击 .exe
 ```mermaid
 graph TB
     subgraph "User Desktop"
-        WV["System WebView<br/>Windows: WebView2<br/>macOS: WKWebView<br/>Linux: WebKitGTK"]
+        WV["System WebView - Windows: WebView2 - macOS: WKWebView - Linux: WebKitGTK"]
     end
 
     subgraph "Tauri v2 Runtime"
         subgraph "Rust Backend"
-            MAIN["main.rs<br/>Entry Point"]
-            LIB["lib.rs<br/>4 Tauri Commands<br/>+ Plugin Registration"]
-            DB_RS["db.rs<br/>Database Struct<br/>Mutex&lt;Connection&gt;"]
+            MAIN["main.rs - Entry Point"]
+            LIB["lib.rs - 4 Tauri Commands - + Plugin Registration"]
+            DB_RS["db.rs - Database Struct - Mutex Connection"]
         end
         subgraph "Tauri Plugins"
-            SQL_PLUGIN["tauri-plugin-sql<br/>Frontend SQLite Access"]
-            NOTIF_PLUGIN["tauri-plugin-notification<br/>System Notifications"]
+            SQL_PLUGIN["tauri-plugin-sql - Frontend SQLite Access"]
+            NOTIF_PLUGIN["tauri-plugin-notification - System Notifications"]
         end
     end
 
     subgraph "Frontend - React + TypeScript"
-        APP["App.tsx<br/>Root Component"]
+        APP["App.tsx - Root Component"]
         ROUTER["HashRouter"]
         subgraph "Pages"
             KANBAN["KanbanBoard"]
@@ -273,12 +273,12 @@ graph TB
             TASK_STORE["useTaskStore"]
             SETTINGS_STORE["useSettingsStore"]
         end
-        DB_FE["db/database.ts<br/>SQLite Connection Singleton"]
+        DB_FE["db/database.ts - SQLite Connection Singleton"]
     end
 
     subgraph "Persistence"
-        DB_FILE[("taskmanager.db<br/>SQLite File<br/>WAL Mode")]
-        LS["localStorage<br/>Theme / Language Prefs"]
+        DB_FILE[("taskmanager.db - SQLite File - WAL Mode")]
+        LS["localStorage - Theme / Language Prefs"]
     end
 
     MAIN --> LIB
@@ -308,14 +308,21 @@ graph TB
 
 ### 架构要点
 
-**双 SQLite 连接（理解本项目架构的关键）：**
+**双 SQLite 连接 + 读写分离（理解本项目架构的关键）：**
 
-Rust 侧通过 `rusqlite` 持有一个连接，**仅用于 PIN 操作**。前端通过 `tauri-plugin-sql` 持有另一个连接，**用于所有任务 CRUD**。两者操作同一个 `taskmanager.db` 文件。
+Rust 侧通过 `rusqlite` 持有一个连接，**用于 PIN 操作和所有写操作**。前端通过 `tauri-plugin-sql` 持有另一个连接，**仅用于 SELECT 查询**。两者操作同一个 `taskmanager.db` 文件。
+
+```
+读操作 (3 种):  Frontend ──tauri-plugin-sql──► SQLite   (SELECT only)
+写操作 (16 种): Frontend ──invoke()──► Rust ──rusqlite──► SQLite   (INSERT/UPDATE/DELETE)
+PIN 操作 (4 种): Frontend ──invoke()──► Rust ──rusqlite──► SQLite   (bcrypt)
+```
 
 为什么这样设计？
 
-- **安全性**：PIN 的 bcrypt 哈希与验证全在 Rust 侧完成，PIN 哈希永不出 Rust 进程。前端通过 `invoke()` 调用 Rust 指令，拿不到原始哈希——只能得到"验证通过/失败"的布尔结果。
-- **便利性**：任务数据没有安全敏感性，让前端通过插件直连 SQLite，省去了为每个 CRUD 操作写 Rust 指令 + invoke 调用的样板代码。
+- **安全性**：PIN 的 bcrypt 哈希和所有写操作的 SQL 执行都在 Rust 侧完成。前端没有 `sql:allow-execute` 权限，最多只能 SELECT，无法执行 DROP/INSERT/UPDATE/DELETE。
+- **灵活性**：读取操作中前端需要做 N+1 关联查询（任务 → 分类/标签/子任务），直接在 JS 侧组合 SQL 比每步都走 IPC 更灵活高效。
+- **权限边界**：Tauri v2 的 capabilities 白名单保证了即使前端代码被篡改，也无法修改数据库——`sql:allow-execute` 不在白名单中。
 
 ---
 
@@ -335,31 +342,31 @@ sequenceDiagram
     participant STORE as Zustand Stores
 
     OS->>BIN: launch executable
-    BIN->>LIB: task_manager_lib::run()
+    BIN->>LIB: task_manager_lib run
     LIB->>LIB: register tauri-plugin-sql
     LIB->>LIB: register tauri-plugin-notification
     LIB->>LIB: execute setup closure
-    LIB->>OS: get app_data_dir (platform-specific)
-    LIB->>DB: Database::new(app_dir)
-    DB->>DB: fs::create_dir_all
+    LIB->>OS: get app_data_dir platform-specific
+    LIB->>DB: Database new with app_dir
+    DB->>DB: fs create_dir_all
     DB->>DB: open taskmanager.db
     DB->>DB: PRAGMA journal_mode=WAL
     DB->>DB: PRAGMA foreign_keys=ON
-    DB->>DB: init_tables() - create 7 tables
-    DB->>DB: seed_categories() - insert 3 defaults
+    DB->>DB: init_tables - create 7 tables
+    DB->>DB: seed_categories - insert 3 defaults
     DB-->>LIB: Database instance
-    LIB->>LIB: app.manage(database)
-    LIB->>LIB: register 4 invoke_handlers
+    LIB->>LIB: app.manage database
+    LIB->>LIB: register 20 invoke_handlers
     LIB->>OS: create WebView window 1200x800
     LIB->>WV: load frontend assets
     WV->>WV: execute Vite bundled JS
-    WV->>REACT: ReactDOM.createRoot -> App
-    REACT->>PLUGIN: getDb() - Database.load sqlite:taskmanager.db
+    WV->>REACT: ReactDOM createRoot to App
+    REACT->>PLUGIN: getDb - Database.load sqlite taskmanager.db
     PLUGIN-->>REACT: SQLite connection handle
-    REACT->>STORE: initSettings() - restore theme/lang from localStorage
-    REACT->>STORE: useAuthStore.checkPinStatus()
-    STORE->>LIB: invoke('has_pin')
-    LIB->>DB: SELECT COUNT(*) FROM pin
+    REACT->>STORE: initSettings - restore theme and lang from localStorage
+    REACT->>STORE: useAuthStore checkPinStatus
+    STORE->>LIB: invoke has_pin
+    LIB->>DB: SELECT COUNT FROM pin
     DB-->>LIB: count
     LIB-->>STORE: bool
 
@@ -373,15 +380,15 @@ sequenceDiagram
 
     Note over REACT,WV: User enters correct PIN
 
-    STORE->>LIB: invoke('verify_pin', pin)
-    LIB->>DB: SELECT pin_hash then bcrypt::verify()
+    STORE->>LIB: invoke verify_pin
+    LIB->>DB: SELECT pin_hash then bcrypt verify
     LIB-->>STORE: true
     STORE->>REACT: isLocked=false
-    REACT->>STORE: useTaskStore.loadTasks()
-    STORE->>PLUGIN: SELECT * FROM tasks with joins
+    REACT->>STORE: useTaskStore loadTasks
+    STORE->>PLUGIN: SELECT FROM tasks with joins
     PLUGIN-->>STORE: task data
-    REACT->>STORE: useTaskStore.loadCategories()
-    REACT->>STORE: useTaskStore.loadTags()
+    REACT->>STORE: useTaskStore loadCategories
+    REACT->>STORE: useTaskStore loadTags
     REACT->>WV: render main UI - Layout + KanbanBoard
 ```
 
@@ -446,8 +453,9 @@ src-tauri/
 ├── icons/                  # 各平台应用图标
 └── src/
     ├── main.rs             # 二进制入口 (5 行)
-    ├── lib.rs              # 核心逻辑: 4 个指令 + 启动函数 (100 行)
-    └── db.rs               # 数据库初始化: 建表 + 种子数据 (104 行)
+    ├── lib.rs              # 核心逻辑: 20 个指令注册 + 插件 + 启动
+    ├── commands.rs         # 16 个写操作指令（tasks/categories/tags/subtasks）
+    └── db.rs               # 数据库初始化: 建表 + 种子数据
 ```
 
 ### 7.2 main.rs — 二进制入口
@@ -470,17 +478,17 @@ fn main() {
 
 ```mermaid
 flowchart TD
-    START([run 被调用]) --> P1["注册 tauri-plugin-sql<br/>(前端直连 SQLite 的能力)"]
-    P1 --> P2["注册 tauri-plugin-notification<br/>(系统通知的能力)"]
-    P2 --> SETUP[setup 闭包]
-    SETUP --> S1["解析 app_data_dir<br/>(各平台路径不同)"]
-    S1 --> S2["Database::new(app_dir)<br/>建表 + 插入种子数据"]
-    S2 --> S3["app.manage(database)<br/>注入为 Tauri 托管状态"]
-    S3 --> REG["注册 4 个 invoke_handler<br/>(Rust 指令 → JS 可调用)"]
-    REG --> RUN["tauri::generate_context!() + run()"]
+    START([run called]) --> P1["register tauri-plugin-sql - frontend SELECT access"]
+    P1 --> P2["register tauri-plugin-notification - system notifications"]
+    P2 --> SETUP[setup closure]
+    SETUP --> S1["resolve app_data_dir - platform-specific path"]
+    S1 --> S2["Database new with app_dir - create tables and seed data"]
+    S2 --> S3["app.manage database - inject as Tauri managed state"]
+    S3 --> REG["register 20 invoke_handlers - 4 PIN plus 16 write commands"]
+    REG --> RUN["tauri generate_context and run"]
 ```
 
-#### 四个 Tauri 指令（均可被前端 invoke 调用）
+#### PIN 认证指令（4 个，定义在 lib.rs）
 
 | 指令名 | 入参 | 返回值 | 做了什么 |
 |--------|------|--------|---------|
@@ -490,6 +498,46 @@ flowchart TD
 | `has_pin` | 无 | `Result<bool, String>` | `SELECT COUNT(*) FROM pin` → count > 0 |
 
 **bcrypt cost factor 为什么是 4？** 通常是 12-14。这里用 4 是刻意降低计算成本——桌面端的 PIN 很短（4-6 位数字），验证需要在毫秒级完成，cost=4 足够对付本地攻击场景（攻击者需要先突破操作系统才能拿到 db 文件）。
+
+### 7.4 commands.rs — 16 个写操作指令
+
+所有写操作集中在此文件，每个指令通过 `State<Database>` 获取 Rust 侧的 `rusqlite` 连接，使用参数化查询（`?1`, `?2`）防止 SQL 注入。输入类型用 `serde::Deserialize` 从 invoke 参数自动反序列化。
+
+#### 任务写指令
+
+| 指令名 | 入参 | 返回值 | 做了什么 |
+|--------|------|--------|---------|
+| `create_task` | `data: CreateTaskData` | `Result<i64, String>` | INSERT INTO tasks，返回新 ID |
+| `update_task` | `id, data: UpdateTaskData` | `Result<(), String>` | 动态构建 SET 子句，仅更新传入的字段 |
+| `delete_task` | `id` | `Result<(), String>` | DELETE（CASCADE 清理子表） |
+| `move_task` | `id, status, sort_order` | `Result<(), String>` | UPDATE status + sort_order |
+
+
+#### 分类写指令
+
+| 指令名 | 入参 | 返回值 |
+|--------|------|--------|
+| `create_category` | `name, color` | `Result<(), String>` |
+| `update_category` | `id, data: UpdateCategoryData` | `Result<(), String>` |
+| `delete_category` | `id` | `Result<(), String>` |
+
+#### 标签写指令
+
+| 指令名 | 入参 | 返回值 |
+|--------|------|--------|
+| `create_tag` | `name, color` | `Result<(), String>` |
+| `delete_tag` | `id` | `Result<(), String>` |
+| `set_task_tags` | `task_id, tag_ids: Vec<i64>` | `Result<(), String>` |
+
+#### 子任务写指令
+
+| 指令名 | 入参 | 返回值 |
+|--------|------|--------|
+| `add_subtask` | `task_id, title` | `Result<(), String>` |
+| `toggle_subtask` | `id, is_completed` | `Result<(), String>` |
+| `delete_subtask` | `id` | `Result<(), String>` |
+
+**动态 UPDATE 实现**（`update_task`、`update_category`）：遍所传入字段中 `Some` 的键，动态拼接 `SET col = ?N` 子句和参数数组。`due_date` 使用 `Option<Option<String>>` 类型区分「不更新」(None)、「设为 NULL」(Some(None))、「设为值」(Some(Some(v))) 三种状态。
 
 ### 7.4 db.rs — 数据库层
 
@@ -574,7 +622,7 @@ src/
 │   └── en.json                 # 英文翻译 (~50 个 key)
 ├── stores/
 │   ├── useAuthStore.ts         # 认证状态：调用 invoke() 与 Rust 通信
-│   ├── useTaskStore.ts         # 任务 CRUD：通过插件直连 SQLite
+│   ├── useTaskStore.ts         # 任务 CRUD：读用插件 / 写用 invoke()
 │   └── useSettingsStore.ts     # 主题/语言偏好：持久化到 localStorage
 ├── components/
 │   ├── Layout.tsx              # 布局壳：TopNav + Outlet
@@ -594,21 +642,21 @@ src/
 
 ```mermaid
 flowchart TD
-    APP_START([App 组件挂载]) --> INIT_DB["调用 getDb()<br/>建立 SQLite 连接<br/>(通过 tauri-plugin-sql)"]
-    INIT_DB --> INIT_SET["调用 initSettings()<br/>从 localStorage 恢复主题/语言"]
-    INIT_SET --> DB_READY{数据库就绪?}
+    APP_START(["App Component Mounts"]) --> INIT_DB["getDb - SQLite Connection via tauri-plugin-sql"]
+    INIT_DB --> INIT_SET["initSettings - Restore Theme and Lang from localStorage"]
+    INIT_SET --> DB_READY{"DB Ready?"}
 
-    DB_READY -->|否| SPINNER[显示 Spin 加载动画]
-    DB_READY -->|是| LOCKED{isLocked?}
+    DB_READY -->|No| SPINNER["Show Spin Loader"]
+    DB_READY -->|Yes| LOCKED{isLocked?}
 
-    LOCKED -->|是| UNLOCK["渲染 UnlockPage<br/>含 ConfigProvider + AntApp<br/>(Router 未挂载)"]
-    LOCKED -->|否| MAIN[渲染主界面]
+    LOCKED -->|Yes| UNLOCK["Render UnlockPage with ConfigProvider and AntApp - Router not mounted"]
+    LOCKED -->|No| MAIN["Render Main UI"]
 
-    MAIN --> CP["ConfigProvider<br/>antd 主题配置:<br/>主色 #fa8c16, 圆角 8<br/>暗色/亮色算法<br/>中/英 locale"]
-    CP --> AA[AntApp 包裹]
+    MAIN --> CP["ConfigProvider - antd Theme: Primary orange, Radius 8, Dark or Light, zh or en Locale"]
+    CP --> AA["AntApp Wrapper"]
     AA --> ROUTER[HashRouter]
-    ROUTER --> LAYOUT[Layout 布局壳]
-    LAYOUT --> OUTLET[Outlet 渲染子路由]
+    ROUTER --> LAYOUT["Layout Shell"]
+    LAYOUT --> OUTLET["Outlet Renders Sub-route"]
 ```
 
 **为什么用 HashRouter 而不是 BrowserRouter？** Tauri 生产环境使用的是 `file://` 协议加载前端资源，`BrowserRouter` 依赖 History API，在 `file://` 下路由刷新会 404。`HashRouter` 把所有路由放在 `#` 之后，不触发文件请求，在 Tauri 中开箱即用。
@@ -626,21 +674,23 @@ flowchart TD
 
 ```mermaid
 graph TB
-    subgraph "useAuthStore<br/>通信方式: invoke() → Rust 指令"
-        AS_S["状态: isLocked, isFirstRun"]
-        AS_A["操作: unlock, setPin, changePin, lock, checkPinStatus"]
-        AS_A -->|invoke()| TCMD["Rust #[tauri::command]"]
+    subgraph "useAuthStore - Comm: invoke to Rust Commands"
+        AS_S["State: isLocked, isFirstRun"]
+        AS_A["Actions: unlock, setPin, changePin, lock, checkPinStatus"]
+        AS_A -->|invoke| TCMD["Rust tauri command"]
     end
 
-    subgraph "useTaskStore<br/>通信方式: db.select/execute → 插件直连 SQLite"
-        TS_S["状态: tasks, categories, tags, loading<br/>searchQuery, filterCategory, filterPriority"]
-        TS_A["操作: createTask, updateTask, deleteTask<br/>moveTask, createCategory, deleteCategory<br/>createTag, deleteTag, setTaskTags<br/>addSubtask, toggleSubtask, deleteSubtask"]
-        TS_A -->|db.select/execute| TSQL["tauri-plugin-sql"]
+    subgraph "useTaskStore - Comm: Read / Write Split"
+        TS_S["State: tasks, categories, tags, loading - searchQuery, filterCategory, filterPriority"]
+        TS_R["Read: loadTasks, loadCategories, loadTags"]
+        TS_W["Write: createTask, updateTask, deleteTask - moveTask, createCategory, deleteCategory - createTag, deleteTag, setTaskTags - addSubtask, toggleSubtask, deleteSubtask"]
+        TS_R -->|db.select| TSQL["tauri-plugin-sql - Read-Only"]
+        TS_W -->|invoke| TCMD2["Rust tauri command - Write"]
     end
 
-    subgraph "useSettingsStore<br/>通信方式: localStorage 读写"
-        SS_S["状态: theme, language"]
-        SS_A["操作: setTheme, setLanguage, initSettings"]
+    subgraph "useSettingsStore - Comm: localStorage R/W"
+        SS_S["State: theme, language"]
+        SS_A["Actions: setTheme, setLanguage, initSettings"]
         SS_S --> LS[localStorage]
     end
 ```
@@ -648,9 +698,22 @@ graph TB
 **为什么两种通信方式并存？**
 
 - **useAuthStore** → `invoke()`：PIN 认证是安全敏感操作。bcrypt 哈希在 Rust 侧计算、存储、比对，JS 永远拿不到哈希值。前端只能得到"对/错"的布尔结果。
-- **useTaskStore** → 插件：任务 CRUD 无安全敏感性。如果为每个 SQL 操作写一个 Rust 指令，会多出几十个 `#[tauri::command]` 和对应的 `invoke()` 调用，纯属样板代码。插件让前端直接发 SQL，简洁高效。
+- **useTaskStore** → 读写分离：读操作（SELECT）通过 `tauri-plugin-sql` 直接查询 SQLite，简洁高效。写操作（INSERT/UPDATE/DELETE）走 `invoke()` → Rust 指令，保证前端无法通过 `allow-execute` 越权操作数据库。Rust 侧使用 `rusqlite` 参数化查询，杜绝 SQL 注入。
 
 ### 8.4 useTaskStore 关键实现细节
+
+**读写分离架构：**
+
+- **读操作** — 3 个函数使用 `tauri-plugin-sql` 的 `db.select()` 直接查询：
+  - `loadTasks()`：SELECT tasks，然后 N+1 富化（关联 categories / tags / subtasks）
+  - `loadCategories()`：`SELECT * FROM categories ORDER BY sort_order`
+  - `loadTags()`：`SELECT * FROM tags ORDER BY name`
+
+- **写操作** — 13 个函数使用 `invoke()` 调用 Rust 指令：
+  - 任务：`create_task` / `update_task` / `delete_task` / `move_task`
+  - 分类：`create_category` / `update_category` / `delete_category`
+  - 标签：`create_tag` / `delete_tag` / `set_task_tags`
+  - 子任务：`add_subtask` / `toggle_subtask` / `delete_subtask`
 
 **loadTasks 采用 N+1 查询模式：**
 
@@ -665,18 +728,19 @@ graph TB
    （含 category_name, tags[], subtasks[], subtask_progress）
 ```
 
-**updateTask 动态构建 SQL**——根据传入的字段动态生成 UPDATE 语句：
+**Rust 侧 update_task 动态构建 SQL**——根据传入字段动态生成 UPDATE 语句（参数化查询，杜绝 SQL 注入）：
 
-```typescript
-const sets = keys.map((k, i) => {
-  if (k === 'is_pinned') return `is_pinned = $${i + 1}`;  // bool → 0/1
-  return `${k} = $${i + 1}`;
-});
-// 如果传了 {title: "新标题", priority: "high"}：
+```rust
+// 前端传入 {title: "新标题", priority: "high"}
+// Rust 侧通过 field! 宏动态拼接：
 // → UPDATE tasks SET title = $1, priority = $2, updated_at = datetime('now') WHERE id = $3
+let mut sets: Vec<String> = Vec::new();
+let mut values: Vec<Box<dyn ToSql>> = Vec::new();
+field!(data.title, "title");      // 只有传了才拼入 SET
+field!(data.priority, "priority");
 ```
 
-**每次写操作后全量 reload**：`createTask`、`updateTask`、`deleteTask`、`moveTask` 等方法在执行完 SQL 后都调用 `get().loadTasks()` 重新加载全部任务并触发 UI 重渲染。这种"写后全量刷新"策略在数据量不大时是最简单的保一致性方案。
+**每次写操作后全量 reload**：`createTask`、`updateTask`、`deleteTask`、`moveTask` 等方法在 invoke 调用 Rust 指令后都调用 `get().loadTasks()` 重新加载全部任务并触发 UI 重渲染。这种"写后全量刷新"策略在数据量不大时是最简单的保一致性方案。
 
 ### 8.5 类型定义 (types/index.ts)
 
@@ -729,65 +793,59 @@ interface KanbanColumn { id, title, status }
 erDiagram
     pin {
         INTEGER id PK
-        TEXT pin_hash "bcrypt 哈希值"
+        TEXT pin_hash "bcrypt hash"
         TEXT created_at
         TEXT updated_at
     }
-
     categories {
         INTEGER id PK
         TEXT name
-        TEXT color "hex 颜色，默认 #fa8c16"
-        INTEGER sort_order "排序权重，越小越靠前"
+        TEXT color "hex color default fa8c16"
+        INTEGER sort_order "smaller value sorts first"
     }
-
     tags {
         INTEGER id PK
-        TEXT name "UK 唯一约束"
-        TEXT color "hex 颜色"
+        TEXT name "unique"
+        TEXT color "hex color"
     }
-
     tasks {
         INTEGER id PK
         TEXT title
         TEXT description
         TEXT notes
         INTEGER category_id FK
-        TEXT priority "CHECK: high / medium / low"
-        TEXT status "CHECK: todo / in_progress / done"
-        TEXT due_date "可为 NULL"
-        INTEGER is_pinned "0 或 1"
-        INTEGER sort_order "看板列内排序"
+        TEXT priority "high or medium or low"
+        TEXT status "todo or in_progress or done"
+        TEXT due_date "nullable"
+        INTEGER is_pinned "0 or 1"
+        INTEGER sort_order "column sort order"
         TEXT created_at
         TEXT updated_at
     }
-
     subtasks {
         INTEGER id PK
         INTEGER task_id FK "ON DELETE CASCADE"
         TEXT title
-        INTEGER is_completed "0 或 1"
+        INTEGER is_completed "0 or 1"
         INTEGER sort_order
     }
-
     task_tags {
-        INTEGER task_id PK FK "ON DELETE CASCADE"
-        INTEGER tag_id PK FK "ON DELETE CASCADE"
+        INTEGER task_id PK,FK "ON DELETE CASCADE"
+        INTEGER tag_id PK,FK "ON DELETE CASCADE"
     }
-
     notifications {
         INTEGER id PK
         INTEGER task_id FK "ON DELETE CASCADE"
         TEXT notify_at
-        INTEGER is_fired "0 或 1"
+        INTEGER is_fired "0 or 1"
     }
-
-    tasks ||--o{ subtasks : "包含"
-    tasks }o--|| categories : "属于"
-    tasks ||--o{ task_tags : "关联"
-    tags ||--o{ task_tags : "被关联"
-    tasks ||--o{ notifications : "触发"
+    tasks ||--o{ subtasks : "contains"
+    tasks }o--|| categories : "belongs to"
+    tasks ||--o{ task_tags : "relates"
+    tags ||--o{ task_tags : "related by"
+    tasks ||--o{ notifications : "triggers"
 ```
+
 
 ### 9.2 完整建表 SQL
 
@@ -882,20 +940,27 @@ INSERT INTO categories (name, color, sort_order) VALUES
 
 ```mermaid
 sequenceDiagram
-    participant UI as React 组件
+    participant UI as React Component
     participant STORE as useTaskStore
-    participant FE_DB as 前端 DB 连接<br/>(tauri-plugin-sql)
+    participant INVOKE as invoke IPC
+    participant RUST as Rust commands.rs
+    participant RU_DB as rusqlite Connection
+    participant FE_DB as Frontend DB Conn - tauri-plugin-sql readonly
     participant SQLITE as taskmanager.db
 
-    UI->>STORE: createTask({title, category_id, ...})
-    STORE->>FE_DB: INSERT INTO tasks (...) VALUES (...)
-    FE_DB->>SQLITE: 写入磁盘
-    FE_DB-->>STORE: lastInsertId
-    STORE->>STORE: loadTasks() 重新加载全部
-    STORE->>FE_DB: SELECT * FROM tasks
-    STORE->>FE_DB: (逐 task) JOIN categories/tags/subtasks
-    STORE->>STORE: set({ tasks: enriched })
-    STORE-->>UI: 触发 React 重渲染
+    UI->>STORE: createTask with data
+    STORE->>INVOKE: invoke create_task with data
+    INVOKE->>RUST: cross-process IPC call
+    RUST->>RU_DB: lock execute INSERT INTO tasks
+    RU_DB->>SQLITE: write to disk
+    RU_DB-->>RUST: lastInsertId
+    RUST-->>INVOKE: Result i64
+    INVOKE-->>STORE: id number
+    STORE->>STORE: loadTasks reload all
+    STORE->>FE_DB: SELECT FROM tasks
+    STORE->>FE_DB: per task JOIN categories tags subtasks
+    STORE->>STORE: set tasks enriched
+    STORE-->>UI: trigger React re-render
 ```
 
 ### 10.2 拖拽排序 → 入库 → 重排
@@ -905,35 +970,41 @@ sequenceDiagram
     participant DND as @dnd-kit
     participant BOARD as KanbanBoard
     participant STORE as useTaskStore
+    participant INVOKE as invoke IPC
+    participant RUST as Rust commands.rs
 
-    DND->>BOARD: onDragEnd({active, over})
-    BOARD->>BOARD: 计算新 status 和新 sort_order
-    BOARD->>STORE: moveTask(taskId, newStatus, newSortOrder)
-    STORE->>STORE: UPDATE tasks SET status, sort_order
-    STORE->>STORE: loadTasks() 重新加载
-    STORE-->>BOARD: 触发重渲染，卡片出现在新位置
+    DND->>BOARD: onDragEnd
+    BOARD->>BOARD: calc new status and sort_order
+    BOARD->>STORE: moveTask
+    STORE->>INVOKE: invoke move_task with data
+    INVOKE->>RUST: cross-process IPC call
+    RUST->>RUST: execute UPDATE tasks
+    RUST-->>INVOKE: Result
+    INVOKE-->>STORE: ok
+    STORE->>STORE: loadTasks reload
+    STORE-->>BOARD: trigger re-render, card moves
 ```
 
-### 10.3 PIN 验证（唯一走 invoke 的路径）
+### 10.3 PIN 验证（安全敏感路径）
 
 ```mermaid
 sequenceDiagram
     participant UI as UnlockPage
     participant STORE as useAuthStore
-    participant INVOKE as invoke() IPC
+    participant INVOKE as invoke IPC
     participant RUST as Rust lib.rs
     participant DB as rusqlite Connection
 
-    UI->>STORE: unlock(pin: "123456")
-    STORE->>INVOKE: invoke('verify_pin', {pin})
-    INVOKE->>RUST: 跨进程 IPC 调用
-    RUST->>DB: lock().query_row("SELECT pin_hash...")
-    DB-->>RUST: Option&lt;hash&gt;
-    RUST->>RUST: bcrypt::verify(pin, hash)
-    RUST-->>INVOKE: Result&lt;bool, String&gt;
-    INVOKE-->>STORE: ok: boolean
-    STORE->>STORE: set({ isLocked: false })
-    STORE-->>UI: 跳转至主界面
+    UI->>STORE: unlock with pin
+    STORE->>INVOKE: invoke verify_pin
+    INVOKE->>RUST: cross-process IPC call
+    RUST->>DB: lock query_row SELECT pin_hash
+    DB-->>RUST: Option hash
+    RUST->>RUST: bcrypt verify pin hash
+    RUST-->>INVOKE: Result bool
+    INVOKE-->>STORE: ok boolean
+    STORE->>STORE: set isLocked false
+    STORE-->>UI: navigate to main UI
 ```
 
 ---
@@ -986,20 +1057,20 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    DND[DndContext<br/>拖拽上下文<br/>onDragEnd 处理落点]
-    OVERLAY[DragOverlay<br/>拖拽时显示的半透明浮动卡片]
+    DND["DndContext - Drag Context - onDragEnd handler"]
+    OVERLAY["DragOverlay - Semi-transparent floating card - while dragging"]
 
-    COL1[KanbanColumn<br/>status=todo<br/>useDroppable]
-    COL2[KanbanColumn<br/>status=in_progress<br/>useDroppable]
-    COL3[KanbanColumn<br/>status=done<br/>useDroppable]
+    COL1[KanbanColumn - status=todo - useDroppable]
+    COL2[KanbanColumn - status=in_progress - useDroppable]
+    COL3[KanbanColumn - status=done - useDroppable]
 
-    SC1[SortableContext<br/>items=待办任务ID数组]
-    SC2[SortableContext<br/>items=进行中任务ID数组]
-    SC3[SortableContext<br/>items=已完成任务ID数组]
+    SC1["SortableContext - items=todo task ID array"]
+    SC2["SortableContext - items=in-progress task ID array"]
+    SC3["SortableContext - items=done task ID array"]
 
-    C1[TaskCard × N<br/>useSortable]
-    C2[TaskCard × N<br/>useSortable]
-    C3[TaskCard × N<br/>useSortable]
+    C1[TaskCard x N - useSortable]
+    C2[TaskCard x N - useSortable]
+    C3[TaskCard x N - useSortable]
 
     DND --> COL1
     DND --> COL2
@@ -1026,16 +1097,16 @@ graph TB
 
 ```mermaid
 flowchart LR
-    subgraph "开发模式 (cargo tauri dev)"
-        DEV1[bun run dev] --> VITE["Vite 开发服务器<br/>localhost:1420<br/>HMR 热更新端口: 1421"]
+    subgraph "Dev Mode - cargo tauri dev"
+        DEV1[bun run dev] --> VITE["Vite Dev Server - localhost:1420 - HMR Port: 1421"]
         VITE --> TDEV[cargo tauri dev]
-        TDEV --> WV_DEV[调试 WebView<br/>含开发者工具]
+        TDEV --> WV_DEV["Debug WebView - w/ DevTools"]
     end
 
-    subgraph "生产构建 (cargo tauri build)"
-        B1[tsc 类型检查] --> B2["vite build<br/>产物输出到 dist/"]
-        B2 --> B3["cargo tauri build<br/>编译 Rust + 打包"]
-        B3 --> BIN["平台二进制<br/>.exe / .app / ELF"]
+    subgraph "Production Build - cargo tauri build"
+        B1["tsc type check"] --> B2["vite build - output to dist/"]
+        B2 --> B3["cargo tauri build - compile Rust + package"]
+        B3 --> BIN["Platform Binary - .exe / .app / ELF"]
     end
 ```
 
@@ -1085,18 +1156,19 @@ flowchart LR
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `src-tauri/src/main.rs` | 5 | Rust 二进制入口 |
-| `src-tauri/src/lib.rs` | 100 | Tauri 启动、4 个指令、插件注册 |
-| `src-tauri/src/db.rs` | 104 | SQLite 连接、7 张表建表、种子数据 |
+| `src-tauri/src/lib.rs` | ~95 | Tauri 启动、20 个 invoke_handler、插件注册 |
+| `src-tauri/src/commands.rs` | ~260 | 16 个写操作 Tauri 指令（CRUD：task/category/tag/subtask） |
+| `src-tauri/src/db.rs` | ~104 | SQLite 连接、7 张表建表、种子数据 |
 | `src-tauri/build.rs` | 3 | Tauri 构建脚本 |
 | `src-tauri/Cargo.toml` | 22 | Rust 依赖声明 |
 | `src-tauri/tauri.conf.json` | 28 | Tauri 窗口/构建配置 |
-| `src-tauri/capabilities/default.json` | ~15 | 插件权限白名单 |
+| `src-tauri/capabilities/default.json` | ~15 | 插件权限白名单（SELECT 只读） |
 | `src/main.tsx` | 5 | React 挂载点 |
 | `src/App.tsx` | 87 | 根组件：条件渲染 + 路由 + 主题 |
 | `src/types/index.ts` | 53 | 全部 TS 类型定义 |
-| `src/db/database.ts` | 10 | SQLite 连接单例 |
+| `src/db/database.ts` | 10 | SQLite 连接单例（plugin 只读） |
 | `src/stores/useAuthStore.ts` | 40 | PIN 认证状态（invoke Rust 指令） |
-| `src/stores/useTaskStore.ts` | 267 | 任务 CRUD 状态（插件直连 SQLite） |
+| `src/stores/useTaskStore.ts` | ~210 | 任务 CRUD：读用 db.select / 写用 invoke() |
 | `src/stores/useSettingsStore.ts` | ~60 | 设置偏好状态（localStorage） |
 | `src/components/Layout.tsx` | ~30 | 布局壳 |
 | `src/components/TopNav.tsx` | ~40 | 顶部导航栏 |
