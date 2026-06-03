@@ -230,43 +230,42 @@ cargo tauri dev / 双击 .exe
 
 ```mermaid
 graph TB
-    subgraph "用户桌面"
-        WV[系统 WebView<br/>Windows: WebView2<br/>macOS: WKWebView<br/>Linux: WebKitGTK]
+    subgraph "User Desktop"
+        WV["System WebView<br/>Windows: WebView2<br/>macOS: WKWebView<br/>Linux: WebKitGTK"]
     end
 
-    subgraph "Tauri v2 运行时"
-        subgraph "Rust 后端"
-            MAIN[main.rs<br/>入口点]
-            LIB[lib.rs<br/>4 个 Tauri 指令<br/>+ 插件注册]
-            DB_RS[db.rs<br/>Database 结构体<br/>Mutex&lt;Connection&gt;]
+    subgraph "Tauri v2 Runtime"
+        subgraph "Rust Backend"
+            MAIN["main.rs<br/>Entry Point"]
+            LIB["lib.rs<br/>4 Tauri Commands<br/>+ Plugin Registration"]
+            DB_RS["db.rs<br/>Database Struct<br/>Mutex&lt;Connection&gt;"]
         end
-
-        subgraph "Tauri 插件"
-            SQL_PLUGIN[tauri-plugin-sql<br/>前端直连 SQLite]
-            NOTIF_PLUGIN[tauri-plugin-notification<br/>系统通知]
+        subgraph "Tauri Plugins"
+            SQL_PLUGIN["tauri-plugin-sql<br/>Frontend SQLite Access"]
+            NOTIF_PLUGIN["tauri-plugin-notification<br/>System Notifications"]
         end
     end
 
-    subgraph "前端 (React + TypeScript)"
-        APP[App.tsx<br/>根组件]
-        ROUTER[HashRouter]
-        subgraph "页面"
-            KANBAN[KanbanBoard]
-            STATS[StatisticsPage]
-            SETTINGS[SettingsPage]
-            UNLOCK[UnlockPage]
+    subgraph "Frontend - React + TypeScript"
+        APP["App.tsx<br/>Root Component"]
+        ROUTER["HashRouter"]
+        subgraph "Pages"
+            KANBAN["KanbanBoard"]
+            STATS["StatisticsPage"]
+            SETTINGS["SettingsPage"]
+            UNLOCK["UnlockPage"]
         end
-        subgraph "状态管理 (Zustand)"
-            AUTH_STORE[useAuthStore]
-            TASK_STORE[useTaskStore]
-            SETTINGS_STORE[useSettingsStore]
+        subgraph "State Management - Zustand"
+            AUTH_STORE["useAuthStore"]
+            TASK_STORE["useTaskStore"]
+            SETTINGS_STORE["useSettingsStore"]
         end
-        DB_FE[db/database.ts<br/>SQLite 连接单例]
+        DB_FE["db/database.ts<br/>SQLite Connection Singleton"]
     end
 
-    subgraph "持久化"
-        DB_FILE[(taskmanager.db<br/>SQLite 文件<br/>WAL 模式)]
-        LS[localStorage<br/>主题 / 语言偏好]
+    subgraph "Persistence"
+        DB_FILE[("taskmanager.db<br/>SQLite File<br/>WAL Mode")]
+        LS["localStorage<br/>Theme / Language Prefs"]
     end
 
     MAIN --> LIB
@@ -275,8 +274,7 @@ graph TB
     LIB --> NOTIF_PLUGIN
     DB_RS --> DB_FILE
     DB_FE -->|tauri-plugin-sql| DB_FILE
-    AUTH_STORE -->|invoke()| LIB
-
+    AUTH_STORE -->|invoke| LIB
     WV --> MAIN
     APP --> ROUTER
     ROUTER --> KANBAN
@@ -291,6 +289,7 @@ graph TB
     TASK_STORE --> DB_FE
     SETTINGS_STORE --> LS
 ```
+
 
 ### 架构要点
 
@@ -311,75 +310,66 @@ Rust 侧通过 `rusqlite` 持有一个连接，**仅用于 PIN 操作**。前端
 
 ```mermaid
 sequenceDiagram
-    participant OS as 操作系统
-    participant BIN as Rust main.rs
-    participant LIB as Rust lib.rs (run)
-    participant DB as Database (db.rs)
+    participant OS as OperatingSystem
+    participant BIN as main.rs
+    participant LIB as lib.rs
+    participant DB as Database
     participant WV as WebView
     participant PLUGIN as tauri-plugin-sql
     participant REACT as React App
     participant STORE as Zustand Stores
 
-    OS->>BIN: 启动可执行文件
+    OS->>BIN: launch executable
     BIN->>LIB: task_manager_lib::run()
-
-    LIB->>LIB: 注册 tauri-plugin-sql
-    LIB->>LIB: 注册 tauri-plugin-notification
-
-    LIB->>LIB: setup 闭包执行
-    LIB->>OS: 获取 app_data_dir<br/>各平台不同，见 §6
-
+    LIB->>LIB: register tauri-plugin-sql
+    LIB->>LIB: register tauri-plugin-notification
+    LIB->>LIB: execute setup closure
+    LIB->>OS: get app_data_dir (platform-specific)
     LIB->>DB: Database::new(app_dir)
-    DB->>DB: 创建目录 (fs::create_dir_all)
-    DB->>DB: 打开 taskmanager.db
+    DB->>DB: fs::create_dir_all
+    DB->>DB: open taskmanager.db
     DB->>DB: PRAGMA journal_mode=WAL
     DB->>DB: PRAGMA foreign_keys=ON
-    DB->>DB: init_tables() — 建 7 张表
-    DB->>DB: seed_categories() — 插入 3 个默认分类
-    DB-->>LIB: Database 实例
-
-    LIB->>LIB: app.manage(database)<br/>注入 Tauri 托管状态
-    LIB->>LIB: 注册 4 个 invoke_handler
-
-    LIB->>OS: 创建系统 WebView 窗口<br/>(1200×800, 最小 900×600)
-    LIB->>WV: 加载前端资源 (dist/ 或 devUrl)
-
-    WV->>WV: 执行 Vite 打包的 JS
-    WV->>REACT: ReactDOM.createRoot → &lt;App/&gt;
-
-    REACT->>PLUGIN: getDb(): Database.load('sqlite:taskmanager.db')
-    PLUGIN->>REACT: 返回 SQLite 连接句柄
-
-    REACT->>STORE: initSettings() — 从 localStorage 恢复主题/语言
+    DB->>DB: init_tables() - create 7 tables
+    DB->>DB: seed_categories() - insert 3 defaults
+    DB-->>LIB: Database instance
+    LIB->>LIB: app.manage(database)
+    LIB->>LIB: register 4 invoke_handlers
+    LIB->>OS: create WebView window 1200x800
+    LIB->>WV: load frontend assets
+    WV->>WV: execute Vite bundled JS
+    WV->>REACT: ReactDOM.createRoot -> App
+    REACT->>PLUGIN: getDb() - Database.load sqlite:taskmanager.db
+    PLUGIN-->>REACT: SQLite connection handle
+    REACT->>STORE: initSettings() - restore theme/lang from localStorage
     REACT->>STORE: useAuthStore.checkPinStatus()
     STORE->>LIB: invoke('has_pin')
     LIB->>DB: SELECT COUNT(*) FROM pin
     DB-->>LIB: count
     LIB-->>STORE: bool
 
-    alt 无 PIN (首次运行)
+    alt No PIN - first run
         STORE->>REACT: isFirstRun=true, isLocked=true
-        REACT->>WV: 渲染 UnlockPage (PIN 创建界面)
-    else 已有 PIN
+        REACT->>WV: render UnlockPage - PIN creation
+    else PIN exists
         STORE->>REACT: isFirstRun=false, isLocked=true
-        REACT->>WV: 渲染 UnlockPage (PIN 输入界面)
+        REACT->>WV: render UnlockPage - PIN input
     end
 
-    Note over REACT,WV: 用户输入正确 PIN 后
+    Note over REACT,WV: User enters correct PIN
 
-    STORE->>LIB: invoke('verify_pin', {pin})
-    LIB->>DB: SELECT pin_hash, bcrypt::verify()
+    STORE->>LIB: invoke('verify_pin', pin)
+    LIB->>DB: SELECT pin_hash then bcrypt::verify()
     LIB-->>STORE: true
-
     STORE->>REACT: isLocked=false
     REACT->>STORE: useTaskStore.loadTasks()
-    STORE->>PLUGIN: SELECT * FROM tasks (含关联查询)
-    PLUGIN-->>STORE: 任务数据
+    STORE->>PLUGIN: SELECT * FROM tasks with joins
+    PLUGIN-->>STORE: task data
     REACT->>STORE: useTaskStore.loadCategories()
     REACT->>STORE: useTaskStore.loadTags()
-
-    REACT->>WV: 渲染主界面<br/>(Layout + KanbanBoard)
+    REACT->>WV: render main UI - Layout + KanbanBoard
 ```
+
 
 ---
 
@@ -387,30 +377,27 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    subgraph "Tauri 进程"
-        RUST[Rust 运行时]
-        WEBVIEW[WebView 进程]
+    subgraph "Tauri Process"
+        RUST[Rust Runtime]
+        WEBVIEW[WebView Process]
     end
-
-    subgraph "系统组件"
+    subgraph "System Components"
         WV2[WebView2 / WKWebView / WebKitGTK]
-        FS[文件系统]
-        NOTIF[系统通知服务]
+        FS[File System]
+        NOTIF[System Notification Service]
     end
-
-    subgraph "文件"
+    subgraph "Files"
         DB_FILE[(taskmanager.db)]
-        DIST[dist/ 静态资源]
+        DIST[dist/ Static Assets]
     end
-
-    RUST -->|启动子进程| WEBVIEW
-    WEBVIEW -->|渲染| WV2
+    RUST -->|spawn subprocess| WEBVIEW
+    WEBVIEW -->|render| WV2
     RUST -->|rusqlite| DB_FILE
     WEBVIEW -->|tauri-plugin-sql| DB_FILE
-    RUST -->|读写| FS
+    RUST -->|read/write| FS
     RUST -->|tauri-plugin-notification| NOTIF
-    WEBVIEW -->|invoke() IPC| RUST
-    WEBVIEW -->|加载| DIST
+    WEBVIEW -->|invoke IPC| RUST
+    WEBVIEW -->|load| DIST
 ```
 
 | 运行时依赖 | 来源 | 说明 |
