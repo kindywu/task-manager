@@ -26,7 +26,8 @@ A local desktop task management application. Single-user with PIN unlock. Kanban
 CREATE TABLE pin (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     pin_hash  TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE categories (
@@ -215,11 +216,3 @@ src-tauri/
 - System notifications for due tasks
 - Light/dark theme toggle
 - zh-CN / en language switch
-
-**Out of scope (YAGNI):**
-- Cloud sync / backup
-- Multi-user / permissions
-- Markdown rendering in notes (plain text only)
-- Recurring tasks
-- File attachments
-- Export/import
