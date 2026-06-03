@@ -3,6 +3,8 @@ mod db;
 
 use db::Database;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
 #[tauri::command]
 fn verify_pin(state: tauri::State<'_, Database>, pin: String) -> Result<bool, String> {
@@ -85,6 +87,44 @@ pub fn run() {
                 .expect("failed to resolve app data dir");
             let database = Database::new(app_dir).expect("failed to initialize database");
             app.manage(database);
+
+            let show_i = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
+            let quit_i = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .item(&show_i)
+                .item(&quit_i)
+                .build()?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

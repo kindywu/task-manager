@@ -36,6 +36,13 @@
     "pinChanged": "密码修改成功", "pinNotMatch": "新密码两次输入不一致",
     "wrongOldPin": "旧密码错误"
   },
+  "closeDialog": {
+    "title": "关闭选项",
+    "message": "请选择关闭方式",
+    "hide": "隐藏到托盘",
+    "quit": "退出应用",
+    "remember": "记住我的选择"
+  },
   "common": {
     "save": "保存", "cancel": "取消", "delete": "删除", "edit": "编辑",
     "confirm": "确定", "close": "关闭", "back": "返回", "noData": "暂无数据"
