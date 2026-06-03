@@ -72,8 +72,13 @@ fn exit_app(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.close();
     }
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    app.exit(0);
+    // The tray keeps the process alive, so we must force-exit.
+    // Delay gives WebView2 time to release window handles before process dies.
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        handle.exit(0);
+    });
 }
 
 #[tauri::command]
