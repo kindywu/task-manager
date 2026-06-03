@@ -1,0 +1,43 @@
+{
+  "app": { "title": "任务管理器", "kanban": "看板", "statistics": "统计", "settings": "设置" },
+  "unlock": {
+    "setPin": "设置解锁密码", "enterPin": "输入密码解锁", "confirmPin": "确认密码",
+    "pinMismatch": "两次输入的密码不一致", "pinTooShort": "密码至少需要4位",
+    "wrongPin": "密码错误，请重试", "unlock": "解锁"
+  },
+  "kanban": {
+    "todo": "待办", "inProgress": "进行中", "done": "已完成",
+    "addTask": "添加任务", "search": "搜索任务...", "filter": "筛选"
+  },
+  "task": {
+    "title": "标题", "description": "描述", "notes": "备注", "category": "分类",
+    "priority": "优先级", "high": "高", "medium": "中", "low": "低",
+    "dueDate": "截止日期", "tags": "标签", "subtasks": "子任务",
+    "addSubtask": "添加子任务", "noDueDate": "无截止日期", "overdue": "已过期",
+    "delete": "删除任务", "deleteConfirm": "确定要删除这个任务吗？",
+    "save": "保存", "cancel": "取消", "created": "创建于", "updated": "更新于"
+  },
+  "category": {
+    "manage": "管理分类", "add": "添加分类", "name": "分类名称",
+    "color": "颜色", "delete": "删除分类"
+  },
+  "tag": { "manage": "管理标签", "add": "添加标签", "name": "标签名称" },
+  "statistics": {
+    "completionRate": "完成率", "trend": "趋势", "categoryDistribution": "分类分布",
+    "priorityBreakdown": "优先级分布", "thisWeek": "本周", "thisMonth": "本月",
+    "last7Days": "近7天", "last30Days": "近30天",
+    "tasksCreated": "新建任务", "tasksCompleted": "完成任务",
+    "total": "总计", "completed": "已完成", "pending": "未完成"
+  },
+  "settings": {
+    "changePin": "修改密码", "oldPin": "旧密码", "newPin": "新密码",
+    "confirmNewPin": "确认新密码", "language": "语言", "theme": "主题",
+    "light": "浅色", "dark": "深色", "system": "跟随系统",
+    "pinChanged": "密码修改成功", "pinNotMatch": "新密码两次输入不一致",
+    "wrongOldPin": "旧密码错误"
+  },
+  "common": {
+    "save": "保存", "cancel": "取消", "delete": "删除", "edit": "编辑",
+    "confirm": "确定", "close": "关闭", "back": "返回", "noData": "暂无数据"
+  }
+}
