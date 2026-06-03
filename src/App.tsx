@@ -4,6 +4,8 @@ import { ConfigProvider, App as AntApp, theme, Spin } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { useAuthStore } from './stores/useAuthStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { getDb } from './db/database';
@@ -31,6 +33,21 @@ function AppInner() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
+    listen('tray-quit', () => {
+      closingRef.current = true;
+      invoke('exit_app');
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
     getCurrentWindow().onCloseRequested(async (event) => {
       if (closingRef.current) return;
       const behavior = localStorage.getItem('close-behavior');
@@ -38,7 +55,9 @@ function AppInner() {
         event.preventDefault();
         await getCurrentWindow().hide();
       } else if (behavior === 'quit') {
-        // let the window close normally
+        event.preventDefault();
+        closingRef.current = true;
+        invoke('exit_app');
       } else {
         event.preventDefault();
         setCloseDialogOpen(true);
@@ -66,7 +85,7 @@ function AppInner() {
     }
     setCloseDialogOpen(false);
     closingRef.current = true;
-    await getCurrentWindow().close();
+    invoke('exit_app');
   }, []);
 
   if (!dbReady) {

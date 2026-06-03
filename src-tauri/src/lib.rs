@@ -2,6 +2,7 @@ mod commands;
 mod db;
 
 use db::Database;
+use tauri::Emitter;
 use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -67,6 +68,15 @@ fn change_pin(
 }
 
 #[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.close();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    app.exit(0);
+}
+
+#[tauri::command]
 fn has_pin(state: tauri::State<'_, Database>) -> Result<bool, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     let count: i64 = conn
@@ -106,7 +116,9 @@ pub fn run() {
                                 let _ = w.set_focus();
                             }
                         }
-                        "quit" => app.exit(0),
+                        "quit" => {
+                            let _ = app.emit("tray-quit", ());
+                        }
                         _ => {}
                     }
                 })
@@ -132,6 +144,7 @@ pub fn run() {
             set_pin,
             change_pin,
             has_pin,
+            exit_app,
             commands::create_task,
             commands::update_task,
             commands::delete_task,
