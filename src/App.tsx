@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider, App as AntApp, theme, Spin } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
@@ -8,10 +8,11 @@ import { useSettingsStore } from './stores/useSettingsStore';
 import { getDb } from './db/database';
 import './i18n';
 import UnlockPage from './routes/UnlockPage';
-import KanbanBoard from './routes/KanbanBoard';
-import StatisticsPage from './routes/StatisticsPage';
-import SettingsPage from './routes/SettingsPage';
 import Layout from './components/Layout';
+
+const KanbanBoard = lazy(() => import('./routes/KanbanBoard'));
+const StatisticsPage = lazy(() => import('./routes/StatisticsPage'));
+const SettingsPage = lazy(() => import('./routes/SettingsPage'));
 
 function AppInner() {
   const isLocked = useAuthStore((s) => s.isLocked);
@@ -68,14 +69,16 @@ function AppInner() {
     >
       <AntApp>
         <HashRouter>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route path="/" element={<KanbanBoard />} />
-              <Route path="/statistics" element={<StatisticsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={<Spin size="large" />}>
+            <Routes>
+              <Route element={<Layout />}>
+                <Route path="/" element={<KanbanBoard />} />
+                <Route path="/statistics" element={<StatisticsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+              </Route>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </HashRouter>
       </AntApp>
     </ConfigProvider>
