@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
   },
   "app": {
     "windows": [
@@ -23,16 +23,6 @@
     ],
     "security": {
       "csp": null
-    }
-  },
-  "plugins": {
-    "sql": {
-      "preload": {
-        "db": "sqlite:taskmanager.db"
-      }
-    },
-    "notification": {
-      "all": true
     }
   }
 }
