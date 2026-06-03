@@ -1,3 +1,4 @@
+mod commands;
 mod db;
 
 use db::Database;
@@ -17,7 +18,7 @@ fn verify_pin(state: tauri::State<'_, Database>, pin: String) -> Result<bool, St
 
     match result {
         Some(hash) => Ok(bcrypt::verify(&pin, &hash).unwrap_or(false)),
-        None => Ok(true), // no PIN set yet
+        None => Ok(true),
     }
 }
 
@@ -72,7 +73,6 @@ fn has_pin(state: tauri::State<'_, Database>) -> Result<bool, String> {
     Ok(count > 0)
 }
 
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -83,8 +83,7 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
-            let database =
-                Database::new(app_dir).expect("failed to initialize database");
+            let database = Database::new(app_dir).expect("failed to initialize database");
             app.manage(database);
             Ok(())
         })
@@ -93,6 +92,19 @@ pub fn run() {
             set_pin,
             change_pin,
             has_pin,
+            commands::create_task,
+            commands::update_task,
+            commands::delete_task,
+            commands::move_task,
+            commands::create_category,
+            commands::update_category,
+            commands::delete_category,
+            commands::create_tag,
+            commands::delete_tag,
+            commands::set_task_tags,
+            commands::add_subtask,
+            commands::toggle_subtask,
+            commands::delete_subtask,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

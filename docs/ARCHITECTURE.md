@@ -117,14 +117,15 @@ tauri::Builder::default()
 // capabilities/default.json：声明允许前端使用哪些插件能力
 {
   "permissions": [
-    "sql:allow-select",            // 允许前端执行 SELECT
-    "sql:allow-execute",           // 允许前端执行 INSERT/UPDATE/DELETE
+    "sql:allow-load",              // 允许 Database.load()
+    "sql:allow-select",            // 允许 SELECT 查询
+    // 注意：没有 sql:allow-execute —— 前端不能执行 INSERT/UPDATE/DELETE
     "notification:allow-notify"    // 允许前端发通知
   ]
 }
 ```
 
-> 本项目的大多数 CRUD 不走 `invoke()` —— `tauri-plugin-sql` 让前端拿到了**直连 SQLite 文件的数据库连接**，前端可以直接写 SQL，更简单直接。
+> 本项目**读取**走 `tauri-plugin-sql`（前端直接 SELECT，灵活组合查询），**写入**走 Rust `invoke()` 指令（通过 `commands.rs` 中 16 个指令完成，参数化查询防注入）。这是安全与便利之间的平衡——读的自由度交给前端，写的控制权留在 Rust。
 
 ### 2.4 托管状态（Managed State）—— Rust 中的全局共享数据
 
@@ -158,14 +159,26 @@ Tauri v2 采用细粒度的权限系统。**前端能调用哪些插件能力，
 
 这是一个**白名单机制**——默认什么都做不了，必须显式授权。这在安全上比 Electron 的 `nodeIntegration: true` 强得多。
 
-### 2.6 invoke() 和插件，什么时候用哪个？
+### 2.6 invoke()、插件、以及「读写分离」的实际选择
 
-| 方式 | 适用场景 | 本项目中的使用 |
-|------|---------|--------------|
-| **invoke() 调 Rust 指令** | 需要 Rust 侧执行敏感逻辑（加密、哈希等），不想暴露给前端 | PIN 验证/设置——确保 bcrypt 哈希不出 Rust 进程 |
-| **插件直接调用** | 标准化的原生能力（数据库、通知等），插件已封装好安全边界 | 任务 CRUD——直接用 `tauri-plugin-sql` 发 SQL |
+本项目的做法不是非此即彼，而是按"读/写"拆分：
 
-**经验法则**：如果逻辑需要"只让 Rust 知道的秘密"（密钥、哈希算法等），用 `invoke()`。如果只是常规数据存取，插件更简单直接。
+| 操作类型 | 通信方式 | 原因 |
+|---------|---------|------|
+| **读** (SELECT) | `tauri-plugin-sql` | 前端需要灵活的关联查询（N+1 模式组装 TaskWithRelations），插件直连 SQLite 最直接 |
+| **写** (INSERT/UPDATE/DELETE) | `invoke()` → Rust `#[tauri::command]` | 所有变更走 Rust，参数化查询，不会意外执行 DROP/TRUNCATE |
+| **PIN 认证** | `invoke()` | bcrypt 哈希不出 Rust 进程 |
+
+**为什么不全用 invoke？** 如果读操作也走 Rust 指令，每个查询都需要定义返回类型结构体、序列化为 JSON、IPC 传输——对于需要灵活组合的关联查询（任务 + 分类 + 标签 + 子任务），这既不灵活也增加性能开销。
+
+**为什么不全用插件？** 如果写操作也走插件，需要授予 `sql:allow-execute` 权限，前端就拿到了完整的数据库修改能力。去掉这个权限，前端最多能 SELECT，任何修改都被 Tauri IPC 层拦截。
+
+**capabilities 中的实际权限：**
+
+```json
+"sql:default", "sql:allow-load", "sql:allow-select"
+// 故意没有 "sql:allow-execute"
+```
 
 ### 2.7 Tauri 应用的生命周期
 
@@ -219,7 +232,7 @@ cargo tauri dev / 双击 .exe
 | **状态管理** | Zustand 5 | 认证状态、任务数据、设置偏好 |
 | **路由** | React Router DOM v7 (HashRouter) | 前端页面路由 |
 | **国际化** | i18next + react-i18next | 中英文切换 |
-| **数据库** | SQLite (rusqlite + tauri-plugin-sql) | 本地数据持久化 |
+| **数据库** | SQLite (rusqlite for writes + tauri-plugin-sql for reads) | 本地数据持久化，读写分离 |
 | **密码哈希** | bcrypt (Rust crate) | PIN 码安全存储 |
 | **构建工具** | Vite 5 + bun | 前端打包与依赖管理 |
 | **日期处理** | dayjs | 日期格式化与计算 |
@@ -273,8 +286,10 @@ graph TB
     LIB --> SQL_PLUGIN
     LIB --> NOTIF_PLUGIN
     DB_RS --> DB_FILE
-    DB_FE -->|tauri-plugin-sql| DB_FILE
+    DB_FE -->|tauri-plugin-sql SELECT only| DB_FILE
     AUTH_STORE -->|invoke| LIB
+    TASK_STORE -->|invoke writes| LIB
+    TASK_STORE -->|plugin reads| DB_FE
     WV --> MAIN
     APP --> ROUTER
     ROUTER --> KANBAN

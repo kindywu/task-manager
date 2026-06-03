@@ -28,7 +28,9 @@
       "Bash(bun *)",
       "Bash(git -C \"C:/ws/Rust/tauri/.worktrees/task-manager\" commit -m \"feat: complete task manager UI - kanban, statistics, settings, PIN unlock\")",
       "Bash(cargo build *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(cargo tauri *)",
+      "Bash(cargo run *)"
     ]
   }
 }

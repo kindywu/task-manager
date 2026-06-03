@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
 import { getDb } from '../db/database';
 import type {
   TaskWithRelations,
@@ -62,6 +63,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   filterCategory: null,
   filterPriority: null,
 
+  // ── Reads via tauri-plugin-sql ──────────────────────────
+
   loadTasks: async () => {
     const db = await getDb();
     set({ loading: true });
@@ -121,143 +124,85 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set({ tags });
   },
 
+  // ── Writes via Rust invoke() ────────────────────────────
+
   createTask: async (data) => {
-    const db = await getDb();
-    const result = await db.execute(
-      `INSERT INTO tasks (title, category_id, priority, status, due_date, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        data.title,
-        data.category_id,
-        data.priority || 'medium',
-        data.status || 'todo',
-        data.due_date || null,
-        data.sort_order || 0,
-      ]
-    );
+    const id = await invoke<number>('create_task', { data });
     await get().loadTasks();
-    return result.lastInsertId as number;
+    return id;
   },
 
   updateTask: async (id, data) => {
-    const db = await getDb();
-    const keys = Object.keys(data).filter(
-      (k) => data[k as keyof Task] !== undefined
-    );
-    if (keys.length === 0) return;
-    const sets = keys.map((k, i) => {
-      if (k === 'is_pinned') return `is_pinned = $${i + 1}`;
-      return `${k} = $${i + 1}`;
-    });
-    const values = keys.map((k) => {
-      const v = data[k as keyof Task];
-      if (k === 'is_pinned') return v ? 1 : 0;
-      return v;
-    });
-    await db.execute(
-      `UPDATE tasks SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = $${keys.length + 1}`,
-      [...values, id]
-    );
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v !== undefined) {
+        clean[k] = v;
+      }
+    }
+    if (Object.keys(clean).length === 0) return;
+    await invoke('update_task', { id, data: clean });
     await get().loadTasks();
   },
 
   deleteTask: async (id) => {
-    const db = await getDb();
-    await db.execute('DELETE FROM tasks WHERE id = $1', [id]);
+    await invoke('delete_task', { id });
     await get().loadTasks();
   },
 
   moveTask: async (id, status, sortOrder) => {
-    const db = await getDb();
-    await db.execute(
-      "UPDATE tasks SET status = $1, sort_order = $2, updated_at = datetime('now') WHERE id = $3",
-      [status, sortOrder, id]
-    );
+    await invoke('move_task', { id, status, sortOrder });
     await get().loadTasks();
   },
 
   createCategory: async (name, color) => {
-    const db = await getDb();
-    await db.execute('INSERT INTO categories (name, color) VALUES ($1, $2)', [
-      name,
-      color,
-    ]);
+    await invoke('create_category', { name, color });
     await get().loadCategories();
   },
 
   updateCategory: async (id, data) => {
-    const db = await getDb();
-    const keys = Object.keys(data).filter(
-      (k) => data[k as keyof Category] !== undefined
-    );
-    if (keys.length === 0) return;
-    const sets = keys.map((k, i) => `${k} = $${i + 1}`);
-    const values = keys.map((k) => data[k as keyof Category]);
-    await db.execute(
-      `UPDATE categories SET ${sets.join(', ')} WHERE id = $${keys.length + 1}`,
-      [...values, id]
-    );
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v !== undefined) {
+        clean[k] = v;
+      }
+    }
+    if (Object.keys(clean).length === 0) return;
+    await invoke('update_category', { id, data: clean });
     await get().loadCategories();
   },
 
   deleteCategory: async (id) => {
-    const db = await getDb();
-    await db.execute('DELETE FROM categories WHERE id = $1', [id]);
+    await invoke('delete_category', { id });
     await get().loadCategories();
   },
 
   createTag: async (name, color) => {
-    const db = await getDb();
-    await db.execute('INSERT INTO tags (name, color) VALUES ($1, $2)', [
-      name,
-      color,
-    ]);
+    await invoke('create_tag', { name, color });
     await get().loadTags();
   },
 
   deleteTag: async (id) => {
-    const db = await getDb();
-    await db.execute('DELETE FROM tags WHERE id = $1', [id]);
+    await invoke('delete_tag', { id });
     await get().loadTags();
   },
 
   setTaskTags: async (taskId, tagIds) => {
-    const db = await getDb();
-    await db.execute('DELETE FROM task_tags WHERE task_id = $1', [taskId]);
-    for (const tagId of tagIds) {
-      await db.execute(
-        'INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES ($1, $2)',
-        [taskId, tagId]
-      );
-    }
+    await invoke('set_task_tags', { taskId, tagIds });
     await get().loadTasks();
   },
 
   addSubtask: async (taskId, title) => {
-    const db = await getDb();
-    const maxOrder = await db.select<{ m: number }[]>(
-      'SELECT COALESCE(MAX(sort_order), -1) as m FROM subtasks WHERE task_id = $1',
-      [taskId]
-    );
-    await db.execute(
-      'INSERT INTO subtasks (task_id, title, sort_order) VALUES ($1, $2, $3)',
-      [taskId, title, (maxOrder[0]?.m || 0) + 1]
-    );
+    await invoke('add_subtask', { taskId, title });
     await get().loadTasks();
   },
 
   toggleSubtask: async (id, isCompleted) => {
-    const db = await getDb();
-    await db.execute(
-      'UPDATE subtasks SET is_completed = $1 WHERE id = $2',
-      [isCompleted ? 1 : 0, id]
-    );
+    await invoke('toggle_subtask', { id, isCompleted });
     await get().loadTasks();
   },
 
   deleteSubtask: async (id) => {
-    const db = await getDb();
-    await db.execute('DELETE FROM subtasks WHERE id = $1', [id]);
+    await invoke('delete_subtask', { id });
     await get().loadTasks();
   },
 
