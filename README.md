@@ -11,9 +11,11 @@ A local-first desktop task management app with a Kanban board, built with **Taur
 - **Kanban Board** — drag-and-drop tasks across columns (Todo / In Progress / Done)
 - **Task Management** — title, description, notes, priority, due date, tags, subtasks
 - **PIN Lock** — app-level PIN protection with bcrypt hashing
+- **System Tray** — minimize to tray, close dialog with hide/quit options, remember preference
 - **Statistics** — dashboard with pie charts, bar charts, and summary cards
 - **i18n** — Chinese and English, switchable in settings
 - **Dark Mode** — light / dark / follow system
+- **Lazy Loading** — route-based code splitting for faster initial load
 - **Fully Offline** — all data stored in local SQLite, zero network requests
 
 ## Tech Stack
@@ -63,7 +65,9 @@ The output binary will be in `src-tauri/target/release/`.
 ```
 ├── src/                    # Frontend (React + TypeScript)
 │   ├── components/         # Reusable UI components
-│   ├── routes/             # Page-level components
+│   │   ├── CloseDialog.tsx  # Close behavior dialog (hide to tray / quit)
+│   │   └── ...
+│   ├── routes/             # Page-level components (lazy loaded)
 │   ├── stores/             # Zustand state stores
 │   ├── db/                 # SQLite connection (tauri-plugin-sql)
 │   ├── types/              # TypeScript interfaces
@@ -71,7 +75,7 @@ The output binary will be in `src-tauri/target/release/`.
 ├── src-tauri/              # Backend (Rust)
 │   └── src/
 │       ├── main.rs         # Binary entry point
-│       ├── lib.rs          # Tauri commands + plugin setup
+│       ├── lib.rs          # Tauri commands (5) + plugin setup + tray
 │       └── db.rs           # SQLite schema init + seed data
 ├── docs/
 │   └── ARCHITECTURE.md     # Full architecture documentation
@@ -80,20 +84,24 @@ The output binary will be in `src-tauri/target/release/`.
 
 ## Architecture
 
-Two communication paths between frontend and Rust backend:
+Two communication paths between frontend and Rust backend, plus system tray integration:
 
 ```
 Frontend (React)
     │
     ├── invoke() ──────────► Rust #[tauri::command]
-    │   (PIN auth only)       (bcrypt hash + verify)
+    │   (PIN auth, writes,      (bcrypt hash + verify,
+    │    exit, tray events)       parameterized SQL writes,
+    │                             system tray management)
     │
     └── tauri-plugin-sql ──► SQLite file
-        (task CRUD)            (taskmanager.db)
+        (task reads SELECT)     (taskmanager.db)
 ```
 
 - **PIN operations** go through Rust `invoke()` so the bcrypt hash never reaches JavaScript
-- **Task CRUD** uses the SQL plugin directly for simplicity and performance
+- **Task reads** (SELECT) use the SQL plugin directly for flexibility (N+1 relation queries)
+- **Task writes** (INSERT/UPDATE/DELETE) go through Rust `invoke()` with parameterized queries — the frontend has no `sql:allow-execute` permission
+- **System tray** is managed on the Rust side; close behavior (hide to tray vs quit) is configurable with a remember-preference dialog
 
 For a deep dive, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

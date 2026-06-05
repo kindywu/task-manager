@@ -19,6 +19,8 @@ A local desktop task management application. Single-user with PIN unlock. Kanban
 | Task view | Kanban board | Columns represent status, drag-and-drop cards |
 | Task categorization | Category (required) + tags (optional) | Structure with flexibility |
 | Notifications | Desktop notify + in-app highlight | Tauri notification plugin + overdue styling |
+| Close behavior | Hide to tray vs quit, configurable | Close dialog with remember preference; system tray with show/quit menu |
+| Lazy loading | Route-based code splitting | React.lazy + Suspense + Vite manualChunks for faster initial load |
 
 ## Database Schema
 
@@ -177,6 +179,7 @@ src/
 │   ├── KanbanColumn.tsx
 │   ├── TaskCard.tsx
 │   ├── TaskDrawer.tsx
+│   ├── CloseDialog.tsx
 │   ├── PinInput.tsx
 │   └── ...
 ├── stores/
@@ -201,7 +204,7 @@ src-tauri/
 │   └── default.json
 └── src/
     ├── main.rs
-    ├── lib.rs
+    ├── lib.rs             # Tauri commands, tray setup, plugin registration
     └── db.rs                # Rust-side DB init, notification scan
 ```
 
@@ -216,3 +219,6 @@ src-tauri/
 - System notifications for due tasks
 - Light/dark theme toggle
 - zh-CN / en language switch
+- System tray with hide-to-tray / quit behavior
+- Close dialog with "remember choice" preference
+- Route-based lazy loading with code splitting
